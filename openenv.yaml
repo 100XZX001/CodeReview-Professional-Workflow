@@ -1,0 +1,82 @@
+# openenv.yaml – Environment metadata for OpenEnv
+name: CodeReview-Professional-Workflow
+version: 1.0.0
+description: |
+  Multi‑turn code review environment for professional tasks.
+  Agent must inspect, test, lint, query docs, and negotiate with a simulated author
+  to fix injected bugs. Supports DPO training on full trajectories.
+author: yuvraj gupta
+license: MIT
+
+# ----------------------------------------------------------------------
+# Tasks (difficulty progression)
+# ----------------------------------------------------------------------
+tasks:
+  - id: easy
+    description: "Fix missing null check in a dictionary lookup"
+  - id: medium
+    description: "Improve loop efficiency (replace range(len) with direct iteration)"
+  - id: hard
+    description: "Handle division by zero in average calculation"
+  - id: harder
+    description: "Fix race condition by adding a lock"
+  - id: hardest
+    description: "Resolve potential deadlock by standardising lock order"
+
+# ----------------------------------------------------------------------
+# Observation space (what the agent sees – POMDP)
+# ----------------------------------------------------------------------
+observation_space:
+  type: object
+  properties:
+    code_snippet:
+      type: string
+      description: "Current code snippet (may contain injected bug)"
+    last_tool_output:
+      type: string
+      description: "Output from last executed tool (tests, linter, docs, etc.)"
+    step:
+      type: integer
+      description: "Current step number"
+    done:
+      type: boolean
+      description: "Whether the episode has finished"
+
+# ----------------------------------------------------------------------
+# Action space (discriminated union)
+# ----------------------------------------------------------------------
+action_space:
+  type: object
+  properties:
+    action_type:
+      type: string
+      enum:
+        - write_comment
+        - skip
+        - done
+        - ask_question
+        - propose_fix
+        - execute
+        - inspect
+        - run_linter
+        - run_tests
+        - query_docs
+    comment_text:
+      type: string
+      description: "Required for write_comment"
+    question:
+      type: string
+      description: "Required for ask_question"
+    fix_code:
+      type: string
+      description: "Required for propose_fix"
+    query_topic:
+      type: string
+      description: "Required for query_docs"
+
+# ----------------------------------------------------------------------
+# (Optional) Server configuration – used by openenv serve
+# ----------------------------------------------------------------------
+server:
+  app: server.app:app
+  port: 7860
