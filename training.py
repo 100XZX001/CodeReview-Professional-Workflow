@@ -185,7 +185,7 @@ def supervised_warmup(model, tokenizer, n_examples=500, epochs=2):
         # Use same prompt structure as build_prompt
         prompt = f"""You are an AI code review agent. Your goal is to convince a simulated human developer to accept your proposed fix and name your proposed fix function fix.
 
-The developer has a **{author_personality}** personality and will only accept if you provide solid evidence:
+The developer has a **defensive** personality and will only accept if you provide solid evidence:
 - Tests pass (high pass ratio)
 - Lint is clean (zero errors)
 - Documentation or references are provided
