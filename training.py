@@ -1,5 +1,4 @@
-# training.py – FIXED PPO training (no variable names changed)
-
+# training.py 
 import json
 import torch
 import torch.nn.functional as F
@@ -20,7 +19,7 @@ from environment import CodeReviewEnv
 from models import (
     RunTests, RunLinter, Inspect,
     ProposeFix, WriteComment, AskQuestion,
-    Done, Skip
+    Done, Skip , QueryDocs 
 )
 
 # ======================================================================
@@ -85,6 +84,8 @@ def map_to_env(action: AgentAction):
         return WriteComment(comment_text=action.content or "")
     elif action.action_type == "question":
         return AskQuestion(question=action.content or "")
+    elif action.action_type == "query_docs":               # <-- new
+        return QueryDocs(query_topic=action.content or "")
     elif action.action_type == "done":
         return Done()
     else:
@@ -175,13 +176,29 @@ def supervised_warmup(model, tokenizer, n_examples=500, epochs=2):
         ]
         last_output = random.choice(last_outputs)
         # Use same prompt structure as build_prompt
-        prompt = f"""You are a code review agent.
+        prompt = f"""You are an AI code review agent. Your goal is to convince a simulated human developer to accept your proposed fix and name your proposed fix function fix.
+
+The developer has a **{author_personality}** personality and will only accept if you provide solid evidence:
+- Tests pass (high pass ratio)
+- Lint is clean (zero errors)
+- Documentation or references are provided
+- Your reasoning is clear, uses words like "because" or "therefore", and is detailed (over 30 words if needed)
+
+Workflow:
+1. Use `inspect` to understand the code.
+2. Use `run_tests` and `run_linter` to gather evidence.
+3. Propose a fix (`fix`) and explain why it works (`comment` or `question`).
+4. If the developer pushes back, read their response carefully and address their specific concern.
+5. Once convinced, use `done` to finish.
 
 Code:
-{code}
+{obs.code_snippet}
 
-Last Output:
-{last_output}
+Author says:
+{author_msg if author_msg else "(no response yet – start with inspection)"}
+
+Last tool output:
+{tool_output if tool_output else "(none)"}
 
 Available actions:
 run_tests, run_linter, inspect, fix, comment, question, done
@@ -286,13 +303,35 @@ def generate_action_with_logprob(
 # 6. PROMPT BUILDER (unchanged – exactly as you wrote)
 # ======================================================================
 def build_prompt(obs, history_lines: List[str]) -> str:
-    prompt = f"""You are a code review agent.
+    author_msg = getattr(obs, "author_response", "") or ""
+    tool_output = getattr(obs, "last_tool_output", "") or ""
+    
+    # Personality hint (optional but helpful)
+    author_personality = getattr(obs, "author_personality", "defensive")  # e.g., from env
+    
+    prompt = f"""You are an AI code review agent. Your goal is to convince a simulated human developer to accept your proposed fix and name your proposed fix function fix.
+
+The developer has a **{author_personality}** personality and will only accept if you provide solid evidence:
+- Tests pass (high pass ratio)
+- Lint is clean (zero errors)
+- Documentation or references are provided
+- Your reasoning is clear, uses words like "because" or "therefore", and is detailed (over 30 words if needed)
+
+Workflow:
+1. Use `inspect` to understand the code.
+2. Use `run_tests` and `run_linter` to gather evidence.
+3. Propose a fix (`fix`) and explain why it works (`comment` or `question`).
+4. If the developer pushes back, read their response carefully and address their specific concern.
+5. Once convinced, use `done` to finish.
 
 Code:
 {obs.code_snippet}
 
-Last Output:
-{obs.last_tool_output}
+Author says:
+{author_msg if author_msg else "(no response yet – start with inspection)"}
+
+Last tool output:
+{tool_output if tool_output else "(none)"}
 
 Available actions:
 run_tests, run_linter, inspect, fix, comment, question, done
@@ -392,13 +431,16 @@ def collect_trajectories(
 # ======================================================================
 # 9. ADVANTAGE ESTIMATION (unchanged)
 # ======================================================================
-def compute_gae(
+def compute_returns_and_advantages(
     rewards: List[float],
     dones: List[bool],
-    values: Optional[List[float]] = None,
     gamma: float = 0.99,
-    lambda_: float = 0.95
+    standardize: bool = True
 ) -> Tuple[List[float], List[float]]:
+    """
+    Computes discounted returns and normalised advantages (no critic).
+    Advantages = returns - mean(returns)  (or zero baseline).
+    """
     n = len(rewards)
     returns = [0.0] * n
     running_return = 0.0
@@ -407,29 +449,15 @@ def compute_gae(
             running_return = 0.0
         running_return = rewards[t] + gamma * running_return
         returns[t] = running_return
-    
-    if values is None:
-        advantages = returns
-        adv_mean = np.mean(advantages)
-        adv_std = np.std(advantages) + 1e-8
-        advantages = [(a - adv_mean) / adv_std for a in advantages]
-        return advantages, returns
-    
-    advantages = [0.0] * n
-    gae = 0.0
-    for t in reversed(range(n)):
-        if dones[t]:
-            gae = 0.0
-        next_value = values[t + 1] if t + 1 < n else 0.0
-        delta = rewards[t] + gamma * next_value - values[t]
-        gae = delta + gamma * lambda_ * gae
-        advantages[t] = gae
-    
-    adv_mean = np.mean(advantages)
-    adv_std = np.std(advantages) + 1e-8
-    advantages = [(a - adv_mean) / adv_std for a in advantages]
-    return advantages, returns
 
+    if standardize:
+        advantages = np.array(returns) - np.mean(returns)
+        adv_std = np.std(advantages) + 1e-8
+        advantages = (advantages / adv_std).tolist()
+    else:
+        advantages = returns.copy()
+    
+    return advantages, returns
 # ======================================================================
 # 10. COMPUTE NEW LOGPROBS (unchanged)
 # ======================================================================
@@ -468,7 +496,6 @@ def ppo_update(
     clip_epsilon: float = 0.2,
     entropy_coef: float = 0.01,
     gamma: float = 0.99,
-    lambda_: float = 0.95,
 ) -> Dict[str, float]:
     model.train()
     
@@ -479,8 +506,8 @@ def ppo_update(
     all_returns = []
     
     for traj in trajectories:
-        advantages, returns = compute_gae(
-            traj.rewards, traj.dones, values=None, gamma=gamma, lambda_=lambda_
+        advantages, returns = compute_returns_and_advantages(
+            traj.rewards, traj.dones, gamma=gamma, standardize=True
         )
         all_states.extend(traj.states)
         all_actions.extend(traj.actions)
@@ -555,7 +582,6 @@ def ppo_update(
         "policy_loss": total_policy_loss / n_updates if n_updates > 0 else 0.0,
         "entropy": total_entropy / n_updates if n_updates > 0 else 0.0,
     }
-
 # ======================================================================
 # 12. EVALUATION (unchanged)
 # ======================================================================
@@ -598,7 +624,6 @@ def train_ppo(
     clip_epsilon: float = 0.2,
     entropy_coef: float = 0.01,
     gamma: float = 0.99,
-    lambda_: float = 0.95,
     eval_every: int = 5,
 ):
     print("Loading model...")
@@ -646,7 +671,6 @@ def train_ppo(
             clip_epsilon=clip_epsilon,
             entropy_coef=entropy_coef,
             gamma=gamma,
-            lambda_=lambda_,
         )
         
         print(f"Loss: {metrics['loss']:.4f}")
@@ -680,6 +704,5 @@ if __name__ == "__main__":
         clip_epsilon=0.2,
         entropy_coef=0.01,
         gamma=0.99,
-        lambda_=0.95,
         eval_every=5,
     )
