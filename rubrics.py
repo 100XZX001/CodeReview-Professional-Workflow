@@ -16,18 +16,31 @@ class ToolUsageRubric(Rubric):
     def __call__(self, env, action, obs, reward, done, info):
         score = 0.0
         action_type = info.get("action_type", "")
+        # Use pre-action flags from `info` so first-use bonuses are
+        # computed correctly even though env flags are mutated in-step.
+        prev_tests_run = info.get("prev_tests_run", env._tests_run)
+        prev_linter_run = info.get("prev_linter_run", env._linter_run)
+        prev_docs_queried = info.get("prev_docs_queried", env._docs_queried)
 
         if action_type == "run_tests":
-            if not env._tests_run:
+            if not prev_tests_run:
                 score += self.bonus
             score += 0.015
         elif action_type == "run_linter":
-            if not env._linter_run:
+            if not prev_linter_run:
                 score += self.bonus
             score += 0.015
         elif action_type == "query_docs":
-            if not env._docs_queried:
+            if not prev_docs_queried:
                 score += self.bonus * 0.5
+            # Encourage docs usage when it is likely useful:
+            # - early exploration phase
+            # - non-trivial query text
+            if env._step_count <= 4 and info.get("docs_query_len", 0) >= 8:
+                score += 0.01
+            # Discourage repeated docs calls after the first-use signal.
+            if prev_docs_queried:
+                score -= 0.01
         elif action_type == "ask_question" and env._step_count <= 3:
             score += 0.02
         return score

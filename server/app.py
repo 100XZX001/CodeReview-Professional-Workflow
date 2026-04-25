@@ -33,7 +33,7 @@ def metadata():
             "The agent must inspect, test, lint, query documentation, and negotiate with "
             "a simulated (persona‑driven) author to get a fix accepted. "
             "Includes 25 bugs across 5 difficulty levels, AST‑based injection, "
-            "a reward‑shaping system, and curriculum learning. "
+            "a reward‑shaping system (full/core profiles), and curriculum learning. "
             "Designed for RL training (PPO, DPO, or any policy‑gradient method)."
         )
     }

@@ -1,5 +1,6 @@
 # training.py 
 import json
+import os
 import torch
 import torch.nn.functional as F
 from torch.optim import AdamW
@@ -8,6 +9,7 @@ from typing import List, Dict, Tuple, Optional
 import numpy as np
 import re
 import random
+import matplotlib.pyplot as plt
 
 from unsloth import FastLanguageModel
 from transformers import TrainingArguments
@@ -16,6 +18,7 @@ from datasets import Dataset
 
 # Import your environment and actions (unchanged)
 from environment import CodeReviewEnv
+from redteam import BUG_DB
 from models import (
     RunTests, RunLinter, Inspect,
     ProposeFix, WriteComment, AskQuestion,
@@ -68,6 +71,9 @@ def parse_action(output: str) -> AgentAction:
         return AgentAction("run_linter")
     if "inspect" in output_lower:
         return AgentAction("inspect")
+    if "doc" in output_lower or "documentation" in output_lower:
+        # Bridge natural language mentions to rltool-backed retrieval action.
+        return AgentAction("query_docs", "bug fix guidance")
     
     return AgentAction("invalid", output)
 
@@ -160,6 +166,7 @@ def supervised_warmup(model, tokenizer, n_examples=500, epochs=2):
         '{"action_type": "run_tests"}',
         '{"action_type": "run_linter"}',
         '{"action_type": "inspect"}',
+        '{"action_type": "query_docs", "content": "python keyerror handling"}',
         '{"action_type": "fix", "content": "def corrected():\n    pass"}',
         '{"action_type": "comment", "content": "This looks good."}',
         '{"action_type": "question", "content": "Why is this variable used?"}',
@@ -201,7 +208,7 @@ Last tool output:
 {tool_output if tool_output else "(none)"}
 
 Available actions:
-run_tests, run_linter, inspect, fix, comment, question, done
+run_tests, run_linter, inspect, query_docs, fix, comment, question, done
 
 Respond ONLY in JSON:
 {{"action_type": "...", "content": "..."}}"""
@@ -320,9 +327,10 @@ The developer has a **{author_personality}** personality and will only accept if
 Workflow:
 1. Use `inspect` to understand the code.
 2. Use `run_tests` and `run_linter` to gather evidence.
-3. Propose a fix (`fix`) and explain why it works (`comment` or `question`).
-4. If the developer pushes back, read their response carefully and address their specific concern.
-5. Once convinced, use `done` to finish.
+3. Use `query_docs` when you need references or language-specific guidance.
+4. Propose a fix (`fix`) and explain why it works (`comment` or `question`).
+5. If the developer pushes back, read their response carefully and address their specific concern.
+6. Once convinced, use `done` to finish.
 
 Code:
 {obs.code_snippet}
@@ -334,7 +342,7 @@ Last tool output:
 {tool_output if tool_output else "(none)"}
 
 Available actions:
-run_tests, run_linter, inspect, fix, comment, question, done
+run_tests, run_linter, inspect, query_docs, fix, comment, question, done
 
 Respond ONLY in JSON:
 {{"action_type": "...", "content": "..."}}"""
@@ -417,14 +425,28 @@ def collect_trajectories(
     model,
     tokenizer,
     n_trajectories: int,
-    max_steps: int = 10
+    max_steps: int = 10,
+    task_levels: Optional[List[str]] = None,
+    task_weights: Optional[List[float]] = None,
 ) -> List[Trajectory]:
+    # Link training to RedTeam's full bug distribution by sampling tasks
+    # per trajectory instead of training only on env default ("easy").
+    if task_levels is None:
+        task_levels = list(BUG_DB.keys())
+    if task_weights is not None and len(task_weights) != len(task_levels):
+        raise ValueError("task_weights must match task_levels length")
+    if task_weights is not None and sum(task_weights) <= 0:
+        raise ValueError("task_weights must have a positive total")
+
     trajectories = []
     for i in range(n_trajectories):
+        # Weighted sampling supports curriculum-style training schedules.
+        sampled_task = random.choices(task_levels, weights=task_weights, k=1)[0]
+        env.set_task(sampled_task)
         traj = collect_trajectory(env, model, tokenizer, max_steps)
         total_reward = sum(traj.rewards)
         print(f"Trajectory {i+1}/{n_trajectories}: "
-              f"steps={len(traj)}, reward={total_reward:.3f}")
+              f"task={sampled_task}, steps={len(traj)}, reward={total_reward:.3f}")
         trajectories.append(traj)
     return trajectories
 
@@ -625,6 +647,9 @@ def train_ppo(
     entropy_coef: float = 0.01,
     gamma: float = 0.99,
     eval_every: int = 5,
+    task_levels: Optional[List[str]] = None,
+    curriculum_weighted_sampling: bool = True,
+    reward_profile: str = "full",
 ):
     print("Loading model...")
     model, tokenizer = load_model()
@@ -638,25 +663,56 @@ def train_ppo(
     supervised_warmup(model, tokenizer, n_examples=500, epochs=2)
     
     optimizer = AdamW(model.parameters(), lr=learning_rate)
-    env = CodeReviewEnv()
+    env = CodeReviewEnv(reward_profile=reward_profile)
+    if task_levels is None:
+        task_levels = list(BUG_DB.keys())
     
     print(f"\n{'='*60}")
     print(f"Starting PPO Training")
     print(f"Iterations: {n_iterations}")
     print(f"Trajectories per iteration: {trajectories_per_iter}")
     print(f"PPO epochs: {n_epochs}")
+    print(f"Reward profile: {reward_profile}")
     print(f"{'='*60}\n")
+    reward_history: List[float] = []
+    loss_history: List[float] = []
     
     for iteration in range(n_iterations):
         print(f"\n--- Iteration {iteration + 1}/{n_iterations} ---")
+        # Optional weighted curriculum:
+        # start with easier tasks and smoothly ramp difficulty over training.
+        if curriculum_weighted_sampling:
+            progress = (iteration + 1) / max(n_iterations, 1)
+            easy_w = max(0.15, 0.55 - 0.40 * progress)
+            medium_w = max(0.15, 0.25 - 0.10 * progress)
+            hard_w = 0.10 + 0.05 * progress
+            harder_w = 0.05 + 0.20 * progress
+            hardest_w = 0.05 + 0.25 * progress
+            task_weight_map = {
+                "easy": easy_w,
+                "medium": medium_w,
+                "hard": hard_w,
+                "harder": harder_w,
+                "hardest": hardest_w,
+            }
+            task_weights = [task_weight_map.get(level, 1.0) for level in task_levels]
+        else:
+            task_weights = None
         
         print("Collecting trajectories...")
         trajectories = collect_trajectories(
-            env, model, tokenizer, trajectories_per_iter, max_steps
+            env,
+            model,
+            tokenizer,
+            trajectories_per_iter,
+            max_steps,
+            task_levels=task_levels,
+            task_weights=task_weights,
         )
         
         avg_reward = np.mean([sum(t.rewards) for t in trajectories])
         avg_length = np.mean([len(t) for t in trajectories])
+        reward_history.append(float(avg_reward))
         
         print(f"Avg reward: {avg_reward:.3f}")
         print(f"Avg length: {avg_length:.1f}")
@@ -676,6 +732,7 @@ def train_ppo(
         print(f"Loss: {metrics['loss']:.4f}")
         print(f"Policy loss: {metrics['policy_loss']:.4f}")
         print(f"Entropy: {metrics['entropy']:.4f}")
+        loss_history.append(float(metrics["loss"]))
         
         if (iteration + 1) % eval_every == 0:
             print("\nEvaluating policy...")
@@ -689,6 +746,33 @@ def train_ppo(
     model.save_pretrained("ppo_final_model")
     tokenizer.save_pretrained("ppo_final_model")
     print("Model saved to ppo_final_model/")
+
+    # Save training curves for quick before/after comparisons.
+    # These are intentionally simple line plots to avoid extra dependencies.
+    if reward_history:
+        plt.figure(figsize=(8, 4))
+        plt.plot(range(1, len(reward_history) + 1), reward_history, marker="o")
+        plt.title("Average Reward per Iteration")
+        plt.xlabel("Iteration")
+        plt.ylabel("Average Reward")
+        plt.grid(alpha=0.3)
+        plt.tight_layout()
+        plt.savefig("reward_curve.png", dpi=150)
+        plt.close()
+
+    if loss_history:
+        plt.figure(figsize=(8, 4))
+        plt.plot(range(1, len(loss_history) + 1), loss_history, marker="o", color="tab:red")
+        plt.title("Training Loss per Iteration")
+        plt.xlabel("Iteration")
+        plt.ylabel("Loss")
+        plt.grid(alpha=0.3)
+        plt.tight_layout()
+        plt.savefig("loss_curve.png", dpi=150)
+        plt.close()
+
+    if os.path.exists("reward_curve.png") and os.path.exists("loss_curve.png"):
+        print("Saved reward_curve.png and loss_curve.png")
     print("="*60)
 
 # ======================================================================

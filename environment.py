@@ -103,6 +103,7 @@ class CodeReviewEnv:
     task: str = "easy"
     max_steps: int = 10
     step_penalty: float = 0.01
+    reward_profile: str = "full"  # "full" or "core"
 
     # Curriculum learning
     auto_difficulty: bool = False
@@ -143,15 +144,51 @@ class CodeReviewEnv:
     # Action history
     _action_history: List[str] = field(init=False, default_factory=list)
     _last_action_type: str = field(init=False, default="none")
+    _last_author_response: str = field(init=False, default="")
 
     # FIXED: Track CUMULATIVE episode reward
     _episode_total_reward: float = field(init=False, default=0.0)
     _episode_rewards: List[float] = field(init=False, default_factory=list)
     _difficulty_level: int = field(init=False, default=0)
 
+    # Bug-id bridge:
+    # RedTeam has fine-grained IDs, while TestRunner currently expects a
+    # smaller canonical set. Keep this mapping here so both modules can evolve
+    # independently without breaking evaluation.
+    _BUG_ID_CANONICAL_MAP = {
+        "division_by_zero_empty": "division_by_zero",
+        "division_by_zero_zero": "division_by_zero",
+        "sign_error": "wrong_operator",
+    }
+
     # ===================================================================
     def __post_init__(self):
         self.set_task(self.task)
+
+    # ===================================================================
+    def _build_rubrics(self):
+        """
+        Build rubric stack from a named reward profile.
+        - full: richer shaping for exploration/tool-use behavior
+        - core: minimal stable signal for quick ablations/baselines
+        """
+        core_rubrics = [
+            TestDeltaRubric(weight=self.delta_weight),
+            LintDeltaRubric(weight=self.delta_weight),
+            TerminalSuccessRubric(),
+            StepPenaltyRubric(penalty=self.step_penalty),
+        ]
+        if self.reward_profile == "core":
+            return core_rubrics
+        if self.reward_profile == "full":
+            return [
+                *core_rubrics[:-1],  # step penalty appended at end for consistent ordering
+                ToolUsageRubric(bonus=self.tool_usage_bonus),
+                ExplorationRubric(penalty=-0.05, bonus=self.diversity_bonus * 0.7),
+                AntiHackingRubric(),
+                core_rubrics[-1],
+            ]
+        raise ValueError(f"Unknown reward_profile: {self.reward_profile}")
 
     # ===================================================================
     def set_task(self, task: str):
@@ -159,17 +196,11 @@ class CodeReviewEnv:
             raise ValueError(f"Unknown task: {task}")
 
         self.task = task
-        self._red_team = RedTeam(task)
+        # Use stochastic bug sampling across episodes; fixed seed here would
+        # repeatedly select the same bug and weaken training diversity.
+        self._red_team = RedTeam(task, seed=None)
         self._author = PersonaAuthor()
-        self.rubrics = [
-            TestDeltaRubric(weight=self.delta_weight),
-            LintDeltaRubric(weight=self.delta_weight),
-            ToolUsageRubric(bonus=self.tool_usage_bonus),
-            TerminalSuccessRubric(),
-            ExplorationRubric(penalty=-0.05, bonus=self.diversity_bonus * 0.7),
-            AntiHackingRubric(),
-            StepPenaltyRubric(penalty=self.step_penalty),
-        ]
+        self.rubrics = self._build_rubrics()
 
         task_to_level = {
             "easy": 0, "medium": 1, "hard": 2,
@@ -200,6 +231,7 @@ class CodeReviewEnv:
 
         self._action_history = []
         self._last_action_type = "none"
+        self._last_author_response = ""
 
         # FIXED: Reset episode cumulative reward
         self._episode_total_reward = 0.0
@@ -240,7 +272,8 @@ class CodeReviewEnv:
 
             level_to_task = {0: "easy", 1: "medium", 2: "hard", 3: "harder", 4: "hardest"}
             self.task = level_to_task[self._difficulty_level]
-            self._red_team = RedTeam(self.task)
+            # Keep curriculum stochastic for better coverage within each level.
+            self._red_team = RedTeam(self.task, seed=None)
 
         self._reset_internal()
         return self._get_observation()
@@ -248,9 +281,11 @@ class CodeReviewEnv:
     # ===================================================================
     def _get_observation(self) -> EnhancedObservation:
         """Return COMPLETE Markov state."""
-        # Compute author response: only after comment/question/fix does the author actually speak
+        # Keep the author's message separate from tool output.
+        # Using `_test_results` here can leak unrelated outputs (tests/linter/docs)
+        # and gives the policy a noisy signal for dialogue actions.
         if self._last_action_type in ("write_comment", "ask_question", "propose_fix"):
-            author_response = self._test_results or ""
+            author_response = self._last_author_response
         else:
             author_response = ""
 
@@ -271,7 +306,8 @@ class CodeReviewEnv:
 
             step=self._step_count,
             max_steps=self.max_steps,
-            progress_ratio=self._step_count / self.max_steps,
+            # Guard against accidental `max_steps=0` configs.
+            progress_ratio=(self._step_count / self.max_steps) if self.max_steps > 0 else 1.0,
 
             tests_run=self._tests_run,
             linter_run=self._linter_run,
@@ -313,6 +349,14 @@ class CodeReviewEnv:
             return "unknown"
 
     # ===================================================================
+    def _get_test_runner_bug_id(self) -> str:
+        """
+        Normalize RedTeam bug ids to the canonical ids understood by TestRunner.
+        Falls back to the original id for known direct matches.
+        """
+        return self._BUG_ID_CANONICAL_MAP.get(self._current_bug_id, self._current_bug_id)
+
+    # ===================================================================
     def step(self, action: AnyAction) -> Tuple[EnhancedObservation, Reward, bool, Dict[str, Any]]:
         """
         TRUE RL STEP with:
@@ -327,6 +371,11 @@ class CodeReviewEnv:
         # Store previous metrics for delta computation
         self._previous_test_score = self._current_test_score
         self._previous_lint_score = self._current_lint_score
+        # Snapshot tool-usage flags BEFORE action mutates them.
+        # Rubrics use these to detect true "first-use" behavior.
+        prev_tests_run = self._tests_run
+        prev_linter_run = self._linter_run
+        prev_docs_queried = self._docs_queried
 
         base_reward = 0.0
         action_type = self._get_action_type(action)
@@ -358,7 +407,7 @@ class CodeReviewEnv:
             base_reward = 0.002
 
         elif isinstance(action, RunTests):
-            runner = TestRunner(self._current_bug_id)
+            runner = TestRunner(self._get_test_runner_bug_id())
             score, output = runner.run_tests(self._current_code)
 
             self._current_test_score = score
@@ -371,7 +420,9 @@ class CodeReviewEnv:
                 base_reward += 0.005
 
         elif isinstance(action, QueryDocs):
-            doc = ToolBox.query_docs(action.query_topic)
+            # Normalize query to avoid rewarding empty/noisy requests.
+            query_topic = (action.query_topic or "").strip()
+            doc = ToolBox.query_docs(query_topic if query_topic else "general bug fixing")
             self._doc_results = doc
             self._test_results = f"[Docs]\n{doc[:400]}"
             self._docs_queried = True
@@ -393,6 +444,7 @@ class CodeReviewEnv:
             )
 
             self._comments.append(f"Author: {response}")
+            self._last_author_response = response
             self._test_results = f"[Comment] Author: {response[:200]}"
             base_reward = 0.001
 
@@ -409,6 +461,7 @@ class CodeReviewEnv:
             )
 
             self._comments.append(f"Author: {response}")
+            self._last_author_response = response
             self._test_results = f"[Question] Author: {response[:200]}"
             base_reward = 0.002
 
@@ -424,7 +477,7 @@ class CodeReviewEnv:
                 original_buggy = self._current_code
                 self._current_code = action.fix_code
 
-                runner = TestRunner(self._current_bug_id)
+                runner = TestRunner(self._get_test_runner_bug_id())
                 test_score, test_output = runner.run_tests(self._current_code)
                 lint_score = self._run_linter_score(self._current_code)
                 negotiation_score = self._author.get_negotiation_score()
@@ -453,6 +506,7 @@ class CodeReviewEnv:
                 )
                 self._test_results = f"[Fix] Author: {author_feedback[:200]}"
                 self._comments.append(f"Author: {author_feedback}")
+                self._last_author_response = author_feedback
 
                 base_reward = 0.001   # rubrics provide the real signal
 
@@ -491,6 +545,10 @@ class CodeReviewEnv:
             "lint_score": self._current_lint_score,
             "test_delta": self._current_test_score - self._previous_test_score,
             "lint_delta": self._current_lint_score - self._previous_lint_score,
+            "prev_tests_run": prev_tests_run,
+            "prev_linter_run": prev_linter_run,
+            "prev_docs_queried": prev_docs_queried,
+            "docs_query_len": len((action.query_topic or "").strip()) if isinstance(action, QueryDocs) else 0,
             "base_reward": base_reward,
         }
 

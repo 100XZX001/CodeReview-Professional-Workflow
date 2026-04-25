@@ -9,6 +9,26 @@ import sys
 from typing import Tuple, List, Any, Optional
 from dataclasses import dataclass
 
+# Bridge fine-grained RedTeam ids to canonical TestRunner families.
+# This keeps evaluation stable even when bug generators use richer labels.
+BUG_ID_CANONICAL_MAP = {
+    # Easy-family bugs on `get_user`-style behavior.
+    "simple_typo": "null_check",
+    "default_value": "null_check",
+    "empty_return": "null_check",
+
+    # Medium arithmetic/control-flow aliases.
+    "loop_skip": "off_by_one",
+    "sign_error": "wrong_operator",
+
+    # Hard numeric-safety aliases.
+    "division_by_zero_empty": "division_by_zero",
+    "division_by_zero_zero": "division_by_zero",
+    "float_precision": "division_by_zero",
+    "abs_usage": "division_by_zero",
+    "round_error": "division_by_zero",
+}
+
 @dataclass
 class TestRunner:
     bug_id: str
@@ -25,8 +45,11 @@ class TestRunner:
         if not func_name:
             return 0.0, "No function definition found in agent code"
 
-        # 2. Generate the test script (includes fixed + fuzzed test cases)
-        test_script = self._generate_test_script(fix_code, func_name)
+        # 2. Normalize bug id so broader RedTeam ids still hit meaningful tests.
+        canonical_bug_id = self._canonical_bug_id()
+
+        # 3. Generate the test script (includes fixed + fuzzed test cases)
+        test_script = self._generate_test_script(fix_code, func_name, canonical_bug_id)
         with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False, encoding='utf-8') as f:
             f.write(test_script)
             tmp_path = f.name
@@ -86,10 +109,14 @@ class TestRunner:
             pass
         return None
 
-    def _generate_test_script(self, fix_code: str, func_name: str) -> str:
+    def _canonical_bug_id(self) -> str:
+        """Return canonical bug family used by this test harness."""
+        return BUG_ID_CANONICAL_MAP.get(self.bug_id, self.bug_id)
+
+    def _generate_test_script(self, fix_code: str, func_name: str, canonical_bug_id: str) -> str:
         """Generate a test script that runs fixed + fuzzed test cases and outputs JSON."""
-        test_cases = self._get_test_cases(func_name)
-        fuzzed_cases = self._generate_fuzzed_cases(func_name)
+        test_cases = self._get_test_cases(canonical_bug_id, func_name)
+        fuzzed_cases = self._generate_fuzzed_cases(canonical_bug_id, func_name)
         all_cases = test_cases + fuzzed_cases
 
         lines = []
@@ -115,27 +142,27 @@ class TestRunner:
         lines.append("    print(json.dumps(result))")
         return "\n".join(lines)
 
-    def _get_test_cases(self, func_name: str) -> List[Tuple[List[Any], Any]]:
+    def _get_test_cases(self, canonical_bug_id: str, func_name: str) -> List[Tuple[List[Any], Any]]:
         """
         Return a list of (arguments, expected_output) for the given bug_id.
         Uses the actual function name (dynamic) for consistency.
         """
-        if self.bug_id == "null_check":
+        if canonical_bug_id == "null_check":
             return [
                 ([{"users": {"alice": "Alice"}, "id": "bob"}], None),   # missing key should not crash
                 ([{"users": {"alice": "Alice"}, "id": "alice"}], "Alice"),
             ]
-        elif self.bug_id == "off_by_one":
+        elif canonical_bug_id == "off_by_one":
             return [
                 ([[1,2,3,4]], 4),
                 ([[]], 0),
             ]
-        elif self.bug_id == "division_by_zero":
+        elif canonical_bug_id == "division_by_zero":
             return [
                 ([[]], 0),
                 ([[1,2,3]], 2.0),
             ]
-        elif self.bug_id == "wrong_operator":
+        elif canonical_bug_id == "wrong_operator":
             return [
                 ([5,3], 8),
                 ([-1,1], 0),
@@ -144,13 +171,13 @@ class TestRunner:
             # For missing_lock, deadlock_order, etc., return empty list (will be handled gracefully)
             return []
 
-    def _generate_fuzzed_cases(self, func_name: str) -> List[Tuple[List[Any], Any]]:
+    def _generate_fuzzed_cases(self, canonical_bug_id: str, func_name: str) -> List[Tuple[List[Any], Any]]:
         """
         Generate random test cases to prevent memorisation.
         Only for bugs where meaningful fuzzing is possible.
         """
         cases = []
-        if self.bug_id == "null_check":
+        if canonical_bug_id == "null_check":
             # Random users dictionary and random ids
             for _ in range(self.fuzz_rounds):
                 users = {f"user_{i}": f"name_{i}" for i in range(random.randint(1, 5))}
@@ -162,18 +189,18 @@ class TestRunner:
                     key = "missing_" + str(random.randint(100, 999))
                     expected = None
                 cases.append(([{"users": users, "id": key}], expected))
-        elif self.bug_id == "off_by_one":
+        elif canonical_bug_id == "off_by_one":
             for _ in range(self.fuzz_rounds):
                 length = random.randint(0, 10)
                 arr = list(range(length))
                 cases.append(([arr], length))
-        elif self.bug_id == "division_by_zero":
+        elif canonical_bug_id == "division_by_zero":
             for _ in range(self.fuzz_rounds):
                 length = random.randint(0, 10)
                 data = [random.randint(-100, 100) for _ in range(length)]
                 expected = sum(data)/length if length else 0
                 cases.append(([data], expected))
-        elif self.bug_id == "wrong_operator":
+        elif canonical_bug_id == "wrong_operator":
             for _ in range(self.fuzz_rounds):
                 a = random.randint(-100, 100)
                 b = random.randint(-100, 100)

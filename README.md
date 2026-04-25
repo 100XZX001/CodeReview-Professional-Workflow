@@ -10,22 +10,37 @@ pinned: false
 
 # Code Review Professional Workflow
 
+This project is a multi-turn RL environment where an agent plays the role of a senior code reviewer.
+Instead of just patching code, the agent must gather evidence (`inspect`, `run_tests`, `run_linter`,
+`query_docs`) and convince a simulated developer persona to accept the fix.
 
-            "Multi‑turn code review environment for professional‑level bug fixing. "
-            "The agent must inspect, test, lint, query documentation, and negotiate with "
-            "a simulated (persona‑driven) author to get a fix accepted. "
-            "Includes 25 bugs across 5 difficulty levels, AST‑based injection, "
-            "a reward‑shaping system, and curriculum learning. "
-            "Designed for RL training (PPO, DPO, or any policy‑gradient method)
+### Why this environment is interesting
+
+- It combines **technical correctness** (tests/lint) with **human acceptance** (negotiation).
+- It includes **25 injected bug types** across 5 difficulty levels via `RedTeam`.
+- It supports both a **full reward profile** (rich shaping) and a **core reward profile**
+  (minimal, baseline-friendly signal for ablations).
 
 ## Quick Start
 
 ```python
 from environment import CodeReviewEnv
-env = CodeReviewEnv()
+env = CodeReviewEnv(task="easy", reward_profile="full")
 obs = env.reset()
 print(obs.code_snippet)
 ```
+
+## Demo Script (Non-Technical Friendly)
+
+Use this 60-90 second flow in a demo:
+
+1. Reset on `easy` and show the buggy snippet.
+2. Take `inspect` and `run_tests` actions to show evidence gathering.
+3. Ask `query_docs` once to show retrieval-assisted reasoning.
+4. Propose a fix and show accepted/denied feedback from the author persona.
+5. Repeat once on `harder` to show increased challenge.
+
+Message for audience: "The agent is learning not only to fix code, but to justify and communicate the fix."
 
 ## Environment Endpoints
 

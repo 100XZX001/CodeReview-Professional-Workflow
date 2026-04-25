@@ -1,6 +1,5 @@
 # models.py – Typed Models (Discriminated Unions, POMDP Separation)
 from typing import Literal, Union, Annotated, Optional
-from dataclasses import dataclass
 from pydantic import BaseModel, Field, TypeAdapter, field_validator
 
 # ----------------------------------------------------------------------
@@ -62,8 +61,9 @@ action_adapter = TypeAdapter(AnyAction)
 # ----------------------------------------------------------------------
 # Observation (POMDP – what the agent sees)
 # ----------------------------------------------------------------------
-@dataclass(slots=True)
-class Observation:
+class Observation(BaseModel):
+    # Base schema model used by API metadata endpoints.
+    # Keep this lightweight for compatibility with legacy callers.
     code_snippet: str
     last_tool_output: str = ""
     step: int = 0
@@ -72,15 +72,13 @@ class Observation:
 # ----------------------------------------------------------------------
 # Reward (lightweight)
 # ----------------------------------------------------------------------
-@dataclass(slots=True)
-class Reward:
+class Reward(BaseModel):
     value: float
 
 # ----------------------------------------------------------------------
 # State (full environment state – not exposed to agent)
 # ----------------------------------------------------------------------
-@dataclass(slots=True)
-class State:
+class State(BaseModel):
     pr_title: str
     pr_description: str
     code_snippet: str

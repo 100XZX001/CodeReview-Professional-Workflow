@@ -1,4 +1,4 @@
-# grader.py – Production‑grade, continuous reward, exploit‑aware
+# grader.py – Production‑grade, continuous reward, exploit‑aware, example of  monolithic scoring
 import ast
 import subprocess
 import tempfile
