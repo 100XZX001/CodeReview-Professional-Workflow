@@ -183,7 +183,7 @@ def supervised_warmup(model, tokenizer, n_examples=500, epochs=2):
         ]
         last_output = random.choice(last_outputs)
         # Use same prompt structure as build_prompt
-        prompt = f"""You are an AI code review agent. Your goal is to convince a simulated human developer to accept your proposed fix and name your proposed fix function fix.
+                prompt = f"""You are an AI code review agent. Your goal is to convince a simulated human developer to accept your proposed fix.
 
 The developer has a **defensive** personality and will only accept if you provide solid evidence:
 - Tests pass (high pass ratio)
@@ -199,16 +199,16 @@ Workflow:
 5. Once convinced, use `done` to finish.
 
 Code:
-{obs.code_snippet}
+{code}
 
 Author says:
-{author_msg if author_msg else "(no response yet – start with inspection)"}
+(no response yet – start with inspection)
 
 Last tool output:
-{tool_output if tool_output else "(none)"}
+{last_output}
 
 Available actions:
-run_tests, run_linter, inspect, query_docs, fix, comment, question, done
+run_tests, run_linter, inspect, fix, comment, question, done
 
 Respond ONLY in JSON:
 {{"action_type": "...", "content": "..."}}"""
