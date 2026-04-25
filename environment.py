@@ -7,18 +7,25 @@ import os
 import re
 from dataclasses import dataclass, field
 from typing import Tuple, Dict, Any, Optional, List
-from collections import Counter
 
 from models import (
     AnyAction, WriteComment, ProposeFix, Execute, Inspect,
     RunLinter, RunTests, QueryDocs, Skip, Done, AskQuestion,
     Observation, Reward, State
 )
-from grader import RigorousGrader
 from redteam import RedTeam
 from test_runner import TestRunner
 from author import PersonaAuthor
 from rltool import ToolBox
+from rubrics import (
+    ToolUsageRubric,
+    TestDeltaRubric,
+    LintDeltaRubric,
+    TerminalSuccessRubric,
+    ExplorationRubric,
+    AntiHackingRubric,
+    StepPenaltyRubric,
+)
 
 # ======================================================================
 # FULLY MARKOV OBSERVATION (NOTHING HIDDEN)
@@ -32,37 +39,38 @@ class EnhancedObservation:
     # Code state
     code_snippet: str
     last_tool_output: str
-    
+    author_response: str = ""          # ← ADDED
+
     # Current metrics
     current_test_score: float
     current_lint_score: float
     negotiation_score: float
-    
+
     # CRITICAL: Previous metrics (for understanding deltas)
     previous_test_score: float
     previous_lint_score: float
-    
+
     # CRITICAL: Author internal state (affects reward gating)
     author_confidence: float
     author_threshold: float  # When author accepts
-    
+
     # Progress tracking
     step: int
     max_steps: int
     progress_ratio: float
-    
+
     # Tool usage flags
     tests_run: bool
     linter_run: bool
     docs_queried: bool
-    
+
     # Action history (with outcomes)
     last_action_type: str
     action_history: List[str]  # Last 5 actions
-    
+
     # Terminal flag
     done: bool
-    
+
     # Additional context
     bug_description: str
     comments_count: int
@@ -107,16 +115,16 @@ class CodeReviewEnv:
     task: str = "easy"
     max_steps: int = 10
     step_penalty: float = 0.01
-    
+
     # Curriculum learning
     auto_difficulty: bool = False
     success_threshold: float = 0.7
-    
+
     # Reward shaping parameters
     delta_weight: float = 0.3
     tool_usage_bonus: float = 0.05
     diversity_bonus: float = 0.03
-    
+
     _red_team: Optional[RedTeam] = field(init=False, default=None)
     _author: Optional[PersonaAuthor] = field(init=False, default=None)
 
@@ -132,22 +140,22 @@ class CodeReviewEnv:
 
     _step_count: int = field(init=False, default=0)
     _done: bool = field(init=False, default=False)
-    
+
     # State tracking for dense rewards
     _previous_test_score: float = field(init=False, default=0.0)
     _previous_lint_score: float = field(init=False, default=0.0)
     _current_test_score: float = field(init=False, default=0.0)
     _current_lint_score: float = field(init=False, default=0.0)
-    
+
     # Tool usage tracking
     _tests_run: bool = field(init=False, default=False)
     _linter_run: bool = field(init=False, default=False)
     _docs_queried: bool = field(init=False, default=False)
-    
+
     # Action history
     _action_history: List[str] = field(init=False, default_factory=list)
     _last_action_type: str = field(init=False, default="none")
-    
+
     # FIXED: Track CUMULATIVE episode reward
     _episode_total_reward: float = field(init=False, default=0.0)
     _episode_rewards: List[float] = field(init=False, default_factory=list)
@@ -165,37 +173,46 @@ class CodeReviewEnv:
         self.task = task
         self._red_team = RedTeam(task)
         self._author = PersonaAuthor()
+        self.rubrics = [
+            TestDeltaRubric(weight=self.delta_weight),
+            LintDeltaRubric(weight=self.delta_weight),
+            ToolUsageRubric(bonus=self.tool_usage_bonus),
+            TerminalSuccessRubric(),
+            ExplorationRubric(penalty=-0.05, bonus=self.diversity_bonus * 0.7),
+            AntiHackingRubric(),
+            StepPenaltyRubric(penalty=self.step_penalty),
+        ]
 
         task_to_level = {
-            "easy": 0, "medium": 1, "hard": 2, 
+            "easy": 0, "medium": 1, "hard": 2,
             "harder": 3, "hardest": 4
         }
         self._difficulty_level = task_to_level[task]
-        
+
         self._reset_internal()
 
     # ===================================================================
     def _reset_internal(self):
-        self._step_count = 0
+        self._step_count = 0                         # ← FIXED
         self._comments = []
         self._test_results = None
         self._lint_results = None
         self._doc_results = None
         self._done = False
-        
+
         # Reset state tracking
         self._previous_test_score = 0.0
         self._previous_lint_score = 0.0
         self._current_test_score = 0.0
         self._current_lint_score = 0.0
-        
+
         self._tests_run = False
         self._linter_run = False
         self._docs_queried = False
-        
+
         self._action_history = []
         self._last_action_type = "none"
-        
+
         # FIXED: Reset episode cumulative reward
         self._episode_total_reward = 0.0
 
@@ -225,18 +242,18 @@ class CodeReviewEnv:
         """Reset with optional curriculum adjustment."""
         if self.auto_difficulty and len(self._episode_rewards) > 0:
             recent_performance = sum(self._episode_rewards[-5:]) / min(5, len(self._episode_rewards))
-            
+
             if recent_performance > self.success_threshold and self._difficulty_level < 4:
                 self._difficulty_level += 1
                 print(f"[Curriculum] Increasing difficulty to level {self._difficulty_level}")
             elif recent_performance < 0.3 and self._difficulty_level > 0:
                 self._difficulty_level -= 1
                 print(f"[Curriculum] Decreasing difficulty to level {self._difficulty_level}")
-            
+
             level_to_task = {0: "easy", 1: "medium", 2: "hard", 3: "harder", 4: "hardest"}
             self.task = level_to_task[self._difficulty_level]
             self._red_team = RedTeam(self.task)
-        
+
         self._reset_internal()
         return self._get_observation()
 
@@ -252,9 +269,9 @@ class CodeReviewEnv:
         return EnhancedObservation(
             code_snippet=self._current_code,
             last_tool_output=self._test_results or "",
-            author_response=author_response,          # ← fixed
+            author_response=author_response,          # ← now field exists
 
-             current_test_score=self._current_test_score,
+            current_test_score=self._current_test_score,
             current_lint_score=self._current_lint_score,
             negotiation_score=self._author.get_negotiation_score(),
 
@@ -279,104 +296,7 @@ class CodeReviewEnv:
 
             bug_description=self._bug_description,
             comments_count=len(self._comments),
-            )
-    # ===================================================================
-    def _compute_dense_reward(
-        self, 
-        action: AnyAction, 
-        base_reward: float,
-        action_type: str
-    ) -> float:
-        """
-        Stabilized dense reward:
-        - Decoupled terminal bonus
-        - Controlled base scaling
-        - Symmetric delta handling
-        - Reduced reward hacking surface
-        """
-
-    # ============================================================
-    # 0. BASE REWARD (controlled contribution)
-    # ============================================================
-        reward = 0.4 * base_reward   # ↓ reduce dominance
-
-    # ============================================================
-    # 1. DELTA REWARDS (primary learning signal)
-    # ============================================================
-        effective_delta_weight = self.delta_weight
-        if action_type == "propose_fix":
-            effective_delta_weight *= 0.4  # stronger cut to avoid overlap
-
-        test_delta = self._current_test_score - self._previous_test_score
-        lint_delta = self._current_lint_score - self._previous_lint_score
-
-    # symmetric (no artificial dampening for negatives)
-        reward += effective_delta_weight * test_delta
-        reward += 0.5 * effective_delta_weight * lint_delta
-
-    # ============================================================
-    # 2. TERMINAL SUCCESS BONUS (clean & isolated)
-    # ============================================================
-        if action_type == "propose_fix":
-            if self._current_test_score > 0.95:
-                reward += 0.4   # slightly reduced to prevent saturation
-            elif self._current_test_score > 0.85:
-                reward += 0.2   # smoother gradient instead of jump
-
-    # ============================================================
-    # 3. TOOL USAGE (early guidance only)
-    # ============================================================
-        if action_type == "run_tests":
-            if not self._tests_run:
-                reward += self.tool_usage_bonus
-            reward += 0.015
-
-        elif action_type == "run_linter":
-            if not self._linter_run:
-                reward += self.tool_usage_bonus
-            reward += 0.015
-
-        elif action_type == "query_docs":
-            if not self._docs_queried:
-                reward += self.tool_usage_bonus * 0.5
-    
-        elif action_type == "ask_question":
-            if self._step_count <= 3:
-                reward += 0.02   # tighter window
-
-    # ============================================================
-    # 4. EXPLORATION (less noisy)
-    # ============================================================
-        if len(self._action_history) >= 3:
-            recent = self._action_history[-3:]
-            unique = len(set(recent))
-
-            if unique == 1:
-                reward -= 0.05
-            elif unique == 3:
-                reward += self.diversity_bonus * 0.7  # reduce randomness bias
-
-    # ============================================================
-    # 5. ANTI-HACKING
-    # ============================================================
-        if action_type == "propose_fix":
-            if not self._tests_run:
-                reward -= 0.25   # stronger enforcement
-            if self._step_count < 2:
-                reward -= 0.1
-            if self._tests_run and self._linter_run:
-                reward += 0.02
-
-    # ============================================================
-    # 6. STEP PENALTY (progress pressure)
-    # ============================================================
-        reward -= self.step_penalty
-
-    # ============================================================
-    # 7. CLIP (final safety)
-    # ============================================================
-        return max(-1.0, min(1.0, reward))
-        
+        )
 
     # ===================================================================
     def _get_action_type(self, action: AnyAction) -> str:
@@ -419,11 +339,10 @@ class CodeReviewEnv:
         # Store previous metrics for delta computation
         self._previous_test_score = self._current_test_score
         self._previous_lint_score = self._current_lint_score
-        
+
         base_reward = 0.0
-        info = {}
         action_type = self._get_action_type(action)
-        
+
         # Update action history
         self._action_history.append(action_type)
         self._last_action_type = action_type
@@ -445,7 +364,7 @@ class CodeReviewEnv:
             lint_output = ToolBox.run_linter(self._current_code)
             self._lint_results = lint_output[:500]
             self._test_results = f"[Linter]\n{self._lint_results}"
-            
+
             self._current_lint_score = self._run_linter_score(self._current_code)
             self._linter_run = True
             base_reward = 0.002
@@ -453,13 +372,13 @@ class CodeReviewEnv:
         elif isinstance(action, RunTests):
             runner = TestRunner(self._current_bug_id)
             score, output = runner.run_tests(self._current_code)
-            
+
             self._current_test_score = score
             self._tests_run = True
-            
+
             self._test_results = f"[Tests] Score: {score:.2f}\n{output[:300]}"
             base_reward = 0.002
-            
+
             if score > 0.8:
                 base_reward += 0.005
 
@@ -475,7 +394,7 @@ class CodeReviewEnv:
         # ==============================================================
         elif isinstance(action, WriteComment):
             self._comments.append(f"Agent: {action.comment_text}")
-            
+
             response = self._author.respond(
                 agent_comment=action.comment_text,
                 test_results=self._test_results,
@@ -484,23 +403,23 @@ class CodeReviewEnv:
                 proposed_fix=None,
                 original_code=self._current_code
             )
-            
+
             self._comments.append(f"Author: {response}")
             self._test_results = f"[Comment] Author: {response[:200]}"
             base_reward = 0.001
 
         elif isinstance(action, AskQuestion):
             self._comments.append(f"Agent: {action.question}")
-            
+
             response = self._author.respond(
                 agent_question=action.question,
                 test_results=self._test_results,
                 lint_results=self._lint_results,
                 doc_results=self._doc_results,
                 proposed_fix=None,
-                original_code=original_buggy
+                original_code=self._current_code                  # ← FIXED
             )
-            
+
             self._comments.append(f"Author: {response}")
             self._test_results = f"[Question] Author: {response[:200]}"
             base_reward = 0.002
@@ -513,6 +432,7 @@ class CodeReviewEnv:
                 base_reward = -0.05
                 self._done = True
             else:
+                # Save original code BEFORE overwriting (for author.respond)
                 original_buggy = self._current_code
                 self._current_code = action.fix_code
 
@@ -524,24 +444,9 @@ class CodeReviewEnv:
                 self._current_test_score = test_score
                 self._current_lint_score = lint_score
 
-                component_reward = (
-                    0.4 * test_score +
-                    0.15 * lint_score +
-                    0.15 * negotiation_score
-                )
-                efficiency = 1.0 - (self._step_count / self.max_steps)
-                component_reward += 0.1 * efficiency
-
-                if test_score > 0.8 and lint_score < 0.3:
-                    component_reward *= 0.85
-                if test_score < 0.3 and lint_score > 0.8:
-                    component_reward *= 0.75
-                if test_score > 0.8 and negotiation_score < 0.3:
-                    component_reward *= 0.8
-
+                # Author gating – determines if the episode ends, reward is separate
                 threshold = self._author.thresholds.get(self._author.personality, 0.5)
                 if self._author._confidence < threshold:
-                    component_reward = max(0.0, component_reward - 0.2)
                     if self._step_count < self.max_steps:
                         self._done = False
                     else:
@@ -549,21 +454,19 @@ class CodeReviewEnv:
                 else:
                     self._done = True
 
-                # Get author's verbal feedback (pushback or acceptance)
+                # Get author's verbal feedback (pushback/acceptance)
                 author_feedback = self._author.respond(
                     agent_comment=f"Proposed fix:\n{action.fix_code}",
                     test_results=f"Score: {test_score:.2f}",
                     lint_results=f"Score: {lint_score:.2f}",
                     doc_results=self._doc_results,
                     proposed_fix=action.fix_code,
-                    original_code=self._current_code   # note: original should be the buggy code
+                    original_code=original_buggy   # now correctly the buggy code, not the fix
                 )
-                # Keep the author's reply as the main output (so agent sees it)
                 self._test_results = f"[Fix] Author: {author_feedback[:200]}"
                 self._comments.append(f"Author: {author_feedback}")
 
-                base_reward = component_reward
-                self._test_results = f"[Fix] Test: {test_score:.2f}, Lint: {lint_score:.2f}\n{test_output[:200]}"
+                base_reward = 0.001   # rubrics provide the real signal
 
         # ==============================================================
         # TERMINATION ACTIONS
@@ -584,37 +487,43 @@ class CodeReviewEnv:
             self._done = True
 
         # ==============================================================
-        # COMPUTE FINAL DENSE REWARD (with action_type for fix detection)
-        # ==============================================================
-        final_reward = self._compute_dense_reward(action, base_reward, action_type)
-        
-        # FIXED: Track CUMULATIVE episode reward
-        self._episode_total_reward += final_reward
-        
-        # ==============================================================
-        # STEP UPDATE
+        # STEP UPDATE (before rubric computation so info contains final step)
         # ==============================================================
         self._step_count += 1
-        
         if self._step_count >= self.max_steps:
             self._done = True
-        
-        # FIXED: Store TOTAL episode reward, not just last step
-        if self._done:
-            self._episode_rewards.append(self._episode_total_reward)
-        
+
+        # Get fresh observation (needed for rubrics that may read obs)
         obs = self._get_observation()
-        
+
+        # Prepare info dict (rubrics may need action_type and deltas)
         info = {
+            "action_type": action_type,
             "test_score": self._current_test_score,
             "lint_score": self._current_lint_score,
             "test_delta": self._current_test_score - self._previous_test_score,
             "lint_delta": self._current_lint_score - self._previous_lint_score,
             "base_reward": base_reward,
-            "final_reward": final_reward,
-            "episode_total": self._episode_total_reward,
         }
-        
+
+        # ==============================================================
+        # COMPUTE FINAL REWARD USING RUBRICS
+        # ==============================================================
+        rubric_score = sum(r(self, action, obs, None, self._done, info) for r in self.rubrics)
+        final_reward = 0.4 * base_reward + rubric_score
+        final_reward = max(-1.0, min(1.0, final_reward))   # safety clip
+
+        # Track cumulative episode reward
+        self._episode_total_reward += final_reward
+
+        # Store episode total if done
+        if self._done:
+            self._episode_rewards.append(self._episode_total_reward)
+
+        # Complete info
+        info["final_reward"] = final_reward
+        info["episode_total"] = self._episode_total_reward
+
         return obs, Reward(value=final_reward), self._done, info
 
     # ===================================================================
