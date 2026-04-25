@@ -24,7 +24,7 @@ tasks:
     description: "Resolve potential deadlock by standardising lock order"
 
 # ----------------------------------------------------------------------
-# Observation space (what the agent sees – POMDP)
+# Observation space (complete Markov state – agent sees everything)
 # ----------------------------------------------------------------------
 observation_space:
   type: object
@@ -34,16 +34,69 @@ observation_space:
       description: "Current code snippet (may contain injected bug)"
     last_tool_output:
       type: string
-      description: "Output from last executed tool (tests, linter, docs, etc.)"
+      description: "Raw output from last tool (test runner, linter, etc.)"
+    author_response:
+      type: string
+      description: "Latest feedback from the simulated human developer"
+    current_test_score:
+      type: number
+      description: "Proportion of tests passed (0.0–1.0)"
+    current_lint_score:
+      type: number
+      description: "Normalised pylint score (0.0–1.0)"
+    negotiation_score:
+      type: number
+      description: "Author's confidence minus pushback penalty"
+    previous_test_score:
+      type: number
+      description: "Test score before the last action"
+    previous_lint_score:
+      type: number
+      description: "Lint score before the last action"
+    author_confidence:
+      type: number
+      description: "Internal belief of the author (0.0–1.0)"
+    author_threshold:
+      type: number
+      description: "Confidence threshold for this personality"
     step:
       type: integer
       description: "Current step number"
+    max_steps:
+      type: integer
+      description: "Maximum steps allowed in the episode"
+    progress_ratio:
+      type: number
+      description: "step / max_steps"
+    tests_run:
+      type: boolean
+      description: "Whether the agent has run tests at least once"
+    linter_run:
+      type: boolean
+      description: "Whether the agent has run the linter at least once"
+    docs_queried:
+      type: boolean
+      description: "Whether the agent has queried documentation"
+    last_action_type:
+      type: string
+      description: "String name of the last executed action"
+    action_history:
+      type: array
+      items:
+        type: string
+      description: "Last 5 action types"
     done:
       type: boolean
       description: "Whether the episode has finished"
+    bug_description:
+      type: string
+      description: "Short description of the injected bug"
+    comments_count:
+      type: integer
+      description: "Number of comments exchanged so far"
 
 # ----------------------------------------------------------------------
-# Action space (discriminated union)
+# Action space (short names as produced by the agent)
 # ----------------------------------------------------------------------
 action_space:
   type: object
@@ -51,11 +104,11 @@ action_space:
     action_type:
       type: string
       enum:
-        - write_comment
+        - comment
         - skip
         - done
-        - ask_question
-        - propose_fix
+        - question
+        - fix
         - execute
         - inspect
         - run_linter
@@ -63,13 +116,13 @@ action_space:
         - query_docs
     comment_text:
       type: string
-      description: "Required for write_comment"
+      description: "Required for comment"
     question:
       type: string
-      description: "Required for ask_question"
+      description: "Required for question"
     fix_code:
       type: string
-      description: "Required for propose_fix"
+      description: "Required for fix"
     query_topic:
       type: string
       description: "Required for query_docs"
