@@ -1,4 +1,6 @@
 # training.py 
+import torch._dynamo
+torch._dynamo.config.disable = True
 import json
 import os
 import torch
@@ -103,7 +105,7 @@ def map_to_env(action: AgentAction):
 def load_model():
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name="unsloth/gemma-2-2b-it-bnb-4bit",
-        max_seq_length=2048,
+        max_seq_length=768,
         load_in_4bit=True,
     )
     # FIXED: Lower rank (16), dropout=0 for stability
@@ -132,7 +134,7 @@ def test_model_sanity(model, tokenizer) -> bool:
     test_prompt = "Hello, how are you?"
     messages = [{"role": "user", "content": test_prompt}]
     formatted = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-    inputs = tokenizer(formatted, return_tensors="pt").to("cuda")
+    inputs = tokenizer(formatted, return_tensors="pt", max_length=768, truncation=True).to("cuda")
     with torch.no_grad():
         outputs = model.generate(
             **inputs,
@@ -156,7 +158,7 @@ def test_model_sanity(model, tokenizer) -> bool:
 # ======================================================================
 # 4. SUPERVISED WARM-UP (teaches JSON output)
 # ======================================================================
-def supervised_warmup(model, tokenizer, n_examples=500, epochs=2):
+def supervised_warmup(model, tokenizer, n_examples=500, epochs=8):
     print("\n" + "="*60)
     print("SUPERVISED WARM-UP: Teaching JSON format")
     print("="*60)
@@ -166,10 +168,10 @@ def supervised_warmup(model, tokenizer, n_examples=500, epochs=2):
         '{"action_type": "run_tests"}',
         '{"action_type": "run_linter"}',
         '{"action_type": "inspect"}',
-        '{"action_type": "query_docs", "content": "python keyerror handling"}',
         '{"action_type": "fix", "content": "def corrected():\n    pass"}',
         '{"action_type": "comment", "content": "This looks good."}',
         '{"action_type": "question", "content": "Why is this variable used?"}',
+        '{"action_type": "query_docs", "content": "KeyError"}',
         '{"action_type": "done"}',
     ]
     
@@ -208,7 +210,7 @@ Last tool output:
 {last_output}
 
 Available actions:
-run_tests, run_linter, inspect, fix, comment, question, done
+run_tests, run_linter, inspect, fix, comment, question, done, query_docs
 
 Respond ONLY in JSON:
 {{"action_type": "...", "content": "..."}}"""
@@ -242,7 +244,7 @@ Respond ONLY in JSON:
     print(f"Training on {n_examples} examples for {epochs} epochs...")
     trainer.train()
     print("✓ Warm-up complete\n")
-
+    torch.cuda.empty_cache() 
 # ======================================================================
 # 5. ACTION GENERATION WITH LOGPROB TRACKING (fixed)
 # ======================================================================
@@ -555,7 +557,7 @@ def ppo_update(
             messages = [{"role": "user", "content": state}]
             formatted = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
             full_text = formatted + action
-            inputs = tokenizer(full_text, return_tensors="pt").to("cuda")
+            inputs = tokenizer(full_text, return_tensors="pt", max_length=768, truncation=True).to("cuda")
             
             outputs = model(**inputs)
             logits = outputs.logits
@@ -640,7 +642,7 @@ def evaluate_policy(
 def train_ppo(
     n_iterations: int = 50,
     trajectories_per_iter: int = 10,
-    n_epochs: int = 4,
+    n_epochs: int = 2,
     max_steps: int = 10,
     learning_rate: float = 3e-5,
     clip_epsilon: float = 0.2,
@@ -659,11 +661,11 @@ def train_ppo(
         print("\n❌ Model sanity check failed – cannot proceed.")
         return
     
-    # NEW: Supervised warm-up to teach JSON format
-    supervised_warmup(model, tokenizer, n_examples=500, epochs=2)
+    # NEW: Supervised warm-up to teach JSON format (500 steps with epochs=8)
+    supervised_warmup(model, tokenizer, n_examples=500, epochs=8)
     
     optimizer = AdamW(model.parameters(), lr=learning_rate)
-    env = CodeReviewEnv(reward_profile=reward_profile)
+    env = CodeReviewEnv()
     if task_levels is None:
         task_levels = list(BUG_DB.keys())
     
@@ -748,7 +750,6 @@ def train_ppo(
     print("Model saved to ppo_final_model/")
 
     # Save training curves for quick before/after comparisons.
-    # These are intentionally simple line plots to avoid extra dependencies.
     if reward_history:
         plt.figure(figsize=(8, 4))
         plt.plot(range(1, len(reward_history) + 1), reward_history, marker="o")
@@ -780,7 +781,7 @@ def train_ppo(
 # ======================================================================
 if __name__ == "__main__":
     train_ppo(
-        n_iterations=50,
+        n_iterations=30,
         trajectories_per_iter=10,
         n_epochs=4,
         max_steps=10,
