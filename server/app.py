@@ -27,8 +27,15 @@ def health():
 def metadata():
     print("[METADATA] Requested")
     return {
-        "name": "Code Review Environment",
-        "description": "Multi-turn code review with AST injection, DPO training, and author negotiation."
+        "name": "Code Review Professional Workflow",
+        "description": (
+            "Multi‑turn code review environment for professional‑level bug fixing. "
+            "The agent must inspect, test, lint, query documentation, and negotiate with "
+            "a simulated (persona‑driven) author to get a fix accepted. "
+            "Includes 25 bugs across 5 difficulty levels, AST‑based injection, "
+            "a reward‑shaping system, and curriculum learning. "
+            "Designed for RL training (PPO, DPO, or any policy‑gradient method)."
+        )
     }
 
 @app.get("/schema")
@@ -86,8 +93,7 @@ def step(action: dict):
 @app.get("/state")
 def state():
     print("[STATE] Requested")
-    s = env.state()
-    return s.__dict__
+    return env._get_observation().__dict__
 
 # ----------------------------------------------------------------------
 # Main entry point (for local testing)
