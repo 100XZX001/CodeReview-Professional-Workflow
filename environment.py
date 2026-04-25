@@ -242,49 +242,44 @@ class CodeReviewEnv:
 
     # ===================================================================
     def _get_observation(self) -> EnhancedObservation:
-        """
-        Return COMPLETE Markov state.
-        NOTHING is hidden - reward depends ONLY on (state, action).
-        """
+        """Return COMPLETE Markov state."""
+        # Compute author response: only after comment/question/fix does the author actually speak
+        if self._last_action_type in ("write_comment", "ask_question", "propose_fix"):
+            author_response = self._test_results or ""
+        else:
+            author_response = ""
+
         return EnhancedObservation(
             code_snippet=self._current_code,
             last_tool_output=self._test_results or "",
-            
-            # Current metrics
-            current_test_score=self._current_test_score,
+            author_response=author_response,          # ← fixed
+
+             current_test_score=self._current_test_score,
             current_lint_score=self._current_lint_score,
             negotiation_score=self._author.get_negotiation_score(),
-            
-            # EXPOSED: Previous metrics (for delta understanding)
+
             previous_test_score=self._previous_test_score,
             previous_lint_score=self._previous_lint_score,
-            
-            # EXPOSED: Author internal state (affects gating)
+
             author_confidence=self._author._confidence,
             author_threshold=self._author.thresholds.get(self._author.personality, 0.5),
-            
-            # Progress
+
             step=self._step_count,
             max_steps=self.max_steps,
             progress_ratio=self._step_count / self.max_steps,
-            
-            # Tool usage
+
             tests_run=self._tests_run,
             linter_run=self._linter_run,
             docs_queried=self._docs_queried,
-            
-            # Action history
+
             last_action_type=self._last_action_type,
             action_history=self._action_history[-5:],
-            
-            # Terminal
+
             done=self._done,
-            
-            # Context
+
             bug_description=self._bug_description,
             comments_count=len(self._comments),
-        )
-
+            )
     # ===================================================================
     def _compute_dense_reward(
         self, 
@@ -503,7 +498,7 @@ class CodeReviewEnv:
                 lint_results=self._lint_results,
                 doc_results=self._doc_results,
                 proposed_fix=None,
-                original_code=self._current_code
+                original_code=original_buggy
             )
             
             self._comments.append(f"Author: {response}")
@@ -518,36 +513,32 @@ class CodeReviewEnv:
                 base_reward = -0.05
                 self._done = True
             else:
+                original_buggy = self._current_code
                 self._current_code = action.fix_code
-                
+
                 runner = TestRunner(self._current_bug_id)
                 test_score, test_output = runner.run_tests(self._current_code)
                 lint_score = self._run_linter_score(self._current_code)
                 negotiation_score = self._author.get_negotiation_score()
-                
-                # Update current scores
+
                 self._current_test_score = test_score
                 self._current_lint_score = lint_score
-                
-                # Component reward (scaled down to allow delta distribution)
+
                 component_reward = (
                     0.4 * test_score +
                     0.15 * lint_score +
                     0.15 * negotiation_score
                 )
-                
                 efficiency = 1.0 - (self._step_count / self.max_steps)
                 component_reward += 0.1 * efficiency
-                
-                # Cross-signal consistency
+
                 if test_score > 0.8 and lint_score < 0.3:
                     component_reward *= 0.85
                 if test_score < 0.3 and lint_score > 0.8:
                     component_reward *= 0.75
                 if test_score > 0.8 and negotiation_score < 0.3:
                     component_reward *= 0.8
-                
-                # Author gating
+
                 threshold = self._author.thresholds.get(self._author.personality, 0.5)
                 if self._author._confidence < threshold:
                     component_reward = max(0.0, component_reward - 0.2)
@@ -557,7 +548,20 @@ class CodeReviewEnv:
                         self._done = True
                 else:
                     self._done = True
-                
+
+                # Get author's verbal feedback (pushback or acceptance)
+                author_feedback = self._author.respond(
+                    agent_comment=f"Proposed fix:\n{action.fix_code}",
+                    test_results=f"Score: {test_score:.2f}",
+                    lint_results=f"Score: {lint_score:.2f}",
+                    doc_results=self._doc_results,
+                    proposed_fix=action.fix_code,
+                    original_code=self._current_code   # note: original should be the buggy code
+                )
+                # Keep the author's reply as the main output (so agent sees it)
+                self._test_results = f"[Fix] Author: {author_feedback[:200]}"
+                self._comments.append(f"Author: {author_feedback}")
+
                 base_reward = component_reward
                 self._test_results = f"[Fix] Test: {test_score:.2f}, Lint: {lint_score:.2f}\n{test_output[:200]}"
 
