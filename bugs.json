@@ -1,0 +1,127 @@
+{
+  "easy": {
+    "null_check": {
+      "type": "ast",
+      "bug_type": "null_check",
+      "oracle_hint": "Add back the if-guard that was removed"
+    },
+    "simple_typo": {
+      "type": "ast",
+      "bug_type": "simple_typo",
+      "oracle_hint": "Fix the misspelled variable name"
+    },
+    "string_index": {
+      "type": "ast",
+      "bug_type": "string_index",
+      "oracle_hint": "Correct the index offset"
+    },
+    "default_value": {
+      "type": "ast",
+      "bug_type": "default_value",
+      "oracle_hint": "Restore dict.get() with proper default"
+    },
+    "empty_return": {
+      "type": "ast",
+      "bug_type": "empty_return",
+      "oracle_hint": "Remove the premature return None"
+    }
+  },
+  "medium": {
+    "off_by_one": {
+      "type": "ast",
+      "bug_type": "off_by_one"
+    },
+    "loop_skip": {
+      "type": "ast",
+      "bug_type": "loop_skip"
+    },
+    "sign_error": {
+      "type": "ast",
+      "bug_type": "sign_error"
+    },
+    "swap_args": {
+      "type": "ast",
+      "bug_type": "swap_args"
+    },
+    "uninitialised_var": {
+      "type": "ast",
+      "bug_type": "uninitialised_var"
+    }
+  },
+  "hard": {
+    "division_by_zero_empty": {
+      "type": "ast",
+      "bug_type": "division_by_zero_empty"
+    },
+    "division_by_zero_zero": {
+      "type": "ast",
+      "bug_type": "division_by_zero_zero"
+    },
+    "float_precision": {
+      "type": "ast",
+      "bug_type": "float_precision"
+    },
+    "abs_usage": {
+      "type": "ast",
+      "bug_type": "abs_usage"
+    },
+    "round_error": {
+      "type": "ast",
+      "bug_type": "round_error"
+    }
+  },
+  "harder": {
+    "missing_lock": {
+      "type": "template",
+      "buggy": "counter = 0\ndef increment():\n    global counter\n    counter += 1",
+      "oracle": "counter = 0\nimport threading\nlock = threading.Lock()\ndef increment():\n    global counter\n    with lock:\n        counter += 1"
+    },
+    "double_lock": {
+      "type": "template",
+      "buggy": "import threading\nlock = threading.Lock()\ndef do_work():\n    lock.acquire()\n    lock.acquire()\n    print('working')\n    lock.release()",
+      "oracle": "import threading\nlock = threading.Lock()\ndef do_work():\n    with lock:\n        print('working')"
+    },
+    "global_nonatomic": {
+      "type": "template",
+      "buggy": "count = 0\ndef add():\n    global count\n    count = count + 1",
+      "oracle": "count = 0\ndef add():\n    global count\n    count += 1"
+    },
+    "thread_safe_list": {
+      "type": "template",
+      "buggy": "import threading\nitems = []\ndef append_item(item):\n    items.append(item)",
+      "oracle": "import threading\nitems = []\nlock = threading.Lock()\ndef append_item(item):\n    with lock:\n        items.append(item)"
+    },
+    "volatile_read": {
+      "type": "template",
+      "buggy": "import threading\nstop = False\ndef worker():\n    while not stop:\n        pass",
+      "oracle": "import threading\nstop = False\nlock = threading.Lock()\ndef worker():\n    while True:\n        with lock:\n            if stop:\n                break"
+    }
+  },
+  "hardest": {
+    "deadlock_order": {
+      "type": "template",
+      "buggy": "import threading\nlock1 = threading.Lock()\nlock2 = threading.Lock()\ndef thread1():\n    with lock1:\n        with lock2:\n            pass\ndef thread2():\n    with lock2:\n        with lock1:\n            pass",
+      "oracle": "import threading\nlock1 = threading.Lock()\nlock2 = threading.Lock()\ndef thread1():\n    with lock1:\n        with lock2:\n            pass\ndef thread2():\n    with lock1:\n        with lock2:\n            pass"
+    },
+    "nested_lock_timeout": {
+      "type": "template",
+      "buggy": "import threading\nlock = threading.Lock()\ndef work():\n    lock.acquire()\n    # critical section\n    lock.release()",
+      "oracle": "import threading\nlock = threading.Lock()\ndef work():\n    if lock.acquire(timeout=1):\n        try:\n            # critical section\n        finally:\n            lock.release()"
+    },
+    "fork_join": {
+      "type": "template",
+      "buggy": "import threading\ndef worker():\n    pass\nt = threading.Thread(target=worker)\nt.start()",
+      "oracle": "import threading\ndef worker():\n    pass\nt = threading.Thread(target=worker)\nt.start()\nt.join()"
+    },
+    "mutex_release": {
+      "type": "template",
+      "buggy": "import threading\nlock = threading.Lock()\ndef thread_A():\n    lock.acquire()\n    lock.release()\ndef thread_B():\n    lock.release()",
+      "oracle": "import threading\nlock = threading.Lock()\ndef thread_A():\n    with lock:\n        pass\ndef thread_B():\n    with lock:\n        pass"
+    },
+    "race_on_init": {
+      "type": "template",
+      "buggy": "import threading\nitems = []\ndef init():\n    global items\n    items = [1,2,3]\nt = threading.Thread(target=init)\nt.start()\nprint(items)",
+      "oracle": "import threading\nitems = []\ndef init():\n    global items\n    items = [1,2,3]\nt = threading.Thread(target=init)\nt.start()\nt.join()\nprint(items)"
+    }
+  }
+}
