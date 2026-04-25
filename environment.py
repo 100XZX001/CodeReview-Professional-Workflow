@@ -32,49 +32,37 @@ from rubrics import (
 # ======================================================================
 @dataclass
 class EnhancedObservation:
-    """
-    Complete Markov state - agent has ALL information needed for optimal decisions.
-    Reward function depends ONLY on (state, action), not hidden variables.
-    """
-    # Code state
     code_snippet: str
     last_tool_output: str
-    author_response: str = ""          # ← ADDED
 
-    # Current metrics
     current_test_score: float
     current_lint_score: float
     negotiation_score: float
 
-    # CRITICAL: Previous metrics (for understanding deltas)
     previous_test_score: float
     previous_lint_score: float
 
-    # CRITICAL: Author internal state (affects reward gating)
     author_confidence: float
-    author_threshold: float  # When author accepts
+    author_threshold: float
 
-    # Progress tracking
     step: int
     max_steps: int
     progress_ratio: float
 
-    # Tool usage flags
     tests_run: bool
     linter_run: bool
     docs_queried: bool
 
-    # Action history (with outcomes)
     last_action_type: str
-    action_history: List[str]  # Last 5 actions
+    action_history: List[str]
 
-    # Terminal flag
     done: bool
 
-    # Additional context
     bug_description: str
     comments_count: int
 
+    # default fields must be at the very end
+    author_response: str = ""
 
 # ======================================================================
 # HELPER FUNCTIONS
