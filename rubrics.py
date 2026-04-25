@@ -1,14 +1,15 @@
-# rubrics.py – OpenEnv Rubrics for Code Review Environment
-from openenv.core import Rubric
+# rubrics.py – Self-contained Rubrics (no external OpenEnv dependency)
+
+class Rubric:
+    """Minimal Rubric base – compatible with OpenEnv but self‑contained."""
+    def __call__(self, env, action, obs, reward, done, info):
+        return 0.0
+
 
 # --------------------------------------------------------------------------------
-# 1. TOOL‑USAGE BONUS (encourages first‑time use of diagnostic tools)
+# 1. TOOL‑USAGE BONUS
 # --------------------------------------------------------------------------------
 class ToolUsageRubric(Rubric):
-    """
-    Small fixed reward the first time each of the major diagnostic tools is used.
-    Also gives a tiny reward for every invocation to prevent the agent from ignoring them.
-    """
     def __init__(self, bonus: float = 0.05):
         self.bonus = bonus
 
@@ -33,12 +34,9 @@ class ToolUsageRubric(Rubric):
 
 
 # --------------------------------------------------------------------------------
-# 2. DELTA‑BASED REWARDS (primary learning signal)
+# 2. DELTA‑BASED REWARDS
 # --------------------------------------------------------------------------------
 class TestDeltaRubric(Rubric):
-    """
-    Rewards improvement in the pass ratio of the test suite.
-    """
     def __init__(self, weight: float = 0.3):
         self.weight = weight
 
@@ -51,9 +49,6 @@ class TestDeltaRubric(Rubric):
 
 
 class LintDeltaRubric(Rubric):
-    """
-    Rewards improvement in lint score (normalised 0‑1).
-    """
     def __init__(self, weight: float = 0.3):
         self.weight = weight
 
@@ -66,13 +61,9 @@ class LintDeltaRubric(Rubric):
 
 
 # --------------------------------------------------------------------------------
-# 3. TERMINAL SUCCESS BONUS (propose_fix only)
+# 3. TERMINAL SUCCESS BONUS
 # --------------------------------------------------------------------------------
 class TerminalSuccessRubric(Rubric):
-    """
-    Bonus awarded when a proposed fix achieves high test and lint scores.
-    Graded: >0.85 → 0.2, >0.95 → 0.4.
-    """
     def __call__(self, env, action, obs, reward, done, info):
         if info.get("action_type") != "propose_fix":
             return 0.0
@@ -85,14 +76,9 @@ class TerminalSuccessRubric(Rubric):
 
 
 # --------------------------------------------------------------------------------
-# 4. EXPLORATION & DIVERSITY (discourages repetition, encourages varied actions)
+# 4. EXPLORATION & DIVERSITY
 # --------------------------------------------------------------------------------
 class ExplorationRubric(Rubric):
-    """
-    Encourages diverse action sequences.
-    - Penalty if last 3 actions are all the same.
-    - Bonus if they are all different.
-    """
     def __init__(self, penalty: float = -0.05, bonus: float = 0.021):
         self.penalty = penalty
         self.bonus = bonus
@@ -110,16 +96,9 @@ class ExplorationRubric(Rubric):
 
 
 # --------------------------------------------------------------------------------
-# 5. ANTI‑HACKING & CONSISTENCY (prevents reward without real work)
+# 5. ANTI‑HACKING & CONSISTENCY
 # --------------------------------------------------------------------------------
 class AntiHackingRubric(Rubric):
-    """
-    Penalises suspicious behaviour:
-    - proposing a fix without ever running tests.
-    - proposing a fix too early (step < 2).
-    Additional cross‑signal penalties are applied in the environment (not as a rubric)
-    because they require modifying the base reward, not adding to it.
-    """
     def __call__(self, env, action, obs, reward, done, info):
         if info.get("action_type") != "propose_fix":
             return 0.0
@@ -128,19 +107,15 @@ class AntiHackingRubric(Rubric):
             score -= 0.25
         if env._step_count < 2:
             score -= 0.1
-        # tiny boost if the agent did the “right” preparation
         if env._tests_run and env._linter_run:
             score += 0.02
         return score
 
 
 # --------------------------------------------------------------------------------
-# 6. STEP PENALTY (time pressure)
+# 6. STEP PENALTY
 # --------------------------------------------------------------------------------
 class StepPenaltyRubric(Rubric):
-    """
-    Simple per‑step penalty to encourage efficient resolution.
-    """
     def __init__(self, penalty: float = -0.01):
         self.penalty = penalty
 
