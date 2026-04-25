@@ -69,12 +69,19 @@ class TestRunner:
                 pass
 
     def _get_defined_function_name(self, code: str) -> Optional[str]:
-        """Extract the first function name defined in the code."""
+        """Extract the target function name from the code.
+           Looks for a function named 'fix' first; otherwise returns the first function found.
+        """
         try:
             tree = ast.parse(code)
+            first_func = None
             for node in ast.walk(tree):
                 if isinstance(node, ast.FunctionDef):
-                    return node.name
+                    if node.name == "fix":
+                        return "fix"
+                    if first_func is None:
+                        first_func = node.name
+            return first_func   # fallback if no 'fix' function exists
         except SyntaxError:
             pass
         return None
