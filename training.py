@@ -238,7 +238,7 @@ Respond ONLY in JSON:
             learning_rate=2e-5,
             logging_steps=50,
             save_strategy="no",
-            fp16=True,
+            bf16=True,
         ),
     )
     print(f"Training on {n_examples} examples for {epochs} epochs...")
