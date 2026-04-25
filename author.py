@@ -54,6 +54,9 @@ class PersonaAuthor:
     # ------------------------------------------------------------------
     # Main interaction
     # ------------------------------------------------------------------
+    # Added weight for code change magnitude
+    weight_code_change: float = 0.1   # small change is better
+
     def respond(self,
                 agent_comment: str = "",
                 agent_question: str = "",
@@ -76,19 +79,22 @@ class PersonaAuthor:
         evidence = self._extract_evidence(test_results, lint_results, doc_results)
 
         # Code inspection
+        code_change = 0.0
         if proposed_fix and original_code:
-            evidence["code_change"] = self._inspect_code(proposed_fix, original_code)
+            code_change = self._inspect_code(proposed_fix, original_code)
+            evidence["code_change"] = code_change
 
         # Explanation score
         text = (agent_comment + " " + agent_question).lower()
         explanation_score = self._score_explanation(text)
 
-        # Compute evidence score
+        # Compute evidence score – now includes code change penalty (1 - change)
         evidence_score = (
             self.weight_test_pass * evidence.get("test_pass_ratio", 0.0) +
             self.weight_lint_clean * (1 - min(1.0, evidence.get("lint_errors", 0)/10)) +
             self.weight_doc_found * (1.0 if evidence.get("doc_found") else 0.0) +
-            self.weight_explanation_quality * explanation_score
+            self.weight_explanation_quality * explanation_score +
+            self.weight_code_change * (1.0 - code_change)   # surgical fix rewarded
         )
 
         evidence_score = max(0.0, min(1.0, evidence_score))
