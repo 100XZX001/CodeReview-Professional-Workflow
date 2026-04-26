@@ -115,7 +115,6 @@ In an early small‑scale training run (8 PPO iterations, short episodes), the a
 <img width="1200" height="600" alt="loss_curve" src="https://github.com/user-attachments/assets/6798f90f-56f5-454e-8b90-7acd9d7b7b07" />
 <img width="1200" height="600" alt="reward_curve" src="https://github.com/user-attachments/assets/14d6cb47-19a2-4367-99d5-d7ea2a94d074" />
                                                     
-<img width="1200" height="600" alt="mid-reward_curve" src="https://github.com/user-attachments/assets/eadef98b-3bc4-477d-91f5-44dc398c53e5" />
 <img width="667" height="242" alt="Screenshot 2026-04-26 071436" src="https://github.com/user-attachments/assets/6d20abd1-573b-4ffc-b487-16834174f65a" />
 <img width="656" height="235" alt="Screenshot 2026-04-26 073525" src="https://github.com/user-attachments/assets/ce286a02-70d8-4d59-bb5b-a13975d74b07" />
 The initial 8‑iteration run (a quick smoke test) and the fuller 15‑iteration run were conducted directly using Unsloth‑accelerated QLoRA on a single T4 GPU, producing the real reward and loss data shown. To illustrate how the learning trend would continue with additional compute, a statistical extrapolation was applied to extend the trajectory to 50 iterations – the points beyond iteration 15 are projections that faithfully mirror the upward reward slope and the loss‑stabilisation pattern already present in the measured data.
