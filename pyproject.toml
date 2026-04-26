@@ -5,26 +5,34 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "code_review_professional"
 version = "1.0.0"
-description = "Multi‑turn code review environment with AST injection, DPO training, and author negotiation"
+description = "Multi-turn code review environment for OpenEnv with author negotiation and RL training hooks."
 authors = [{name = "yuvraj gupta", email = "yuvraj467229@gmail.com"}]
 license = {text = "MIT"}
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "openenv-core>=0.2.0",
+    "openenv-core>=0.2.3",
     "fastapi>=0.115.0",
     "uvicorn>=0.24.0",
-    "unsloth>=2025.3.1",
-    "trl>=0.15.0",
-    "accelerate>=1.2.0",
     "pylint>=3.3.0",
-    "sentence-transformers>=3.3.0",
-    "datasets>=3.3.0",
-    "chromadb>=0.5.0",
 ]
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0", "black>=23.0", "isort>=5.0"]
+training = [
+    "accelerate>=1.2.0",
+    "chromadb>=0.5.0",
+    "datasets>=3.3.0",
+    "matplotlib>=3.9.0",
+    "sentence-transformers>=3.3.0",
+    "torch>=2.4.0",
+    "trl>=0.15.0",
+    "unsloth>=2025.3.1",
+]
+
+[project.urls]
+Homepage = "https://huggingface.co/spaces/100XZX001/CodeReview-Professional-Workflow"
+Repository = "https://huggingface.co/spaces/100XZX001/CodeReview-Professional-Workflow"
 
 [tool.openenv]
 server = "server.app:app"

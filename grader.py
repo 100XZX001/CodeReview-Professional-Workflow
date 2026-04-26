@@ -4,6 +4,7 @@ import subprocess
 import tempfile
 import os
 import re
+import sys
 from dataclasses import dataclass
 from typing import Optional
 
@@ -106,7 +107,7 @@ class RigorousGrader:
                 f.flush()
                 tmp_path = f.name
             result = subprocess.run(
-                ['pylint', tmp_path, '--score=y', '--exit-zero'],
+                [sys.executable, '-m', 'pylint', tmp_path, '--score=y', '--exit-zero'],
                 capture_output=True,
                 text=True,
                 timeout=5

@@ -4,13 +4,15 @@
 # This source code is licensed under the BSD-style license found in the
 # LICENSE file in the root directory of this source tree.
 
-"""Criticrl  Environment."""
+"""Code Review Professional Workflow OpenEnv package."""
 
-from .client import CriticrlEnv
-from .models import CriticrlAction, CriticrlObservation
+from .client import CodeReviewEnv
+from .models import AnyAction, Observation, Reward, State
 
 __all__ = [
-    "CriticrlAction",
-    "CriticrlObservation",
-    "CriticrlEnv",
+    "AnyAction",
+    "Observation",
+    "Reward",
+    "State",
+    "CodeReviewEnv",
 ]

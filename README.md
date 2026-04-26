@@ -16,7 +16,7 @@ pinned: false
 | Artifact | Link |
 | --- | --- |
 | Hugging Face Space | [100XZX001/CodeReview-Professional-Workflow](https://huggingface.co/spaces/100XZX001/CodeReview-Professional-Workflow) |
-| Colab-ready training notebook | [yuvraj_openenv_hackathon_v2.ipynb](yuvraj_openenv_hackathon_v2.ipynb) |
+| Colab-ready training notebook | [notebooks/code_review_unsloth_training.ipynb](notebooks/code_review_unsloth_training.ipynb) |
 | Local training script | [training.py](training.py) |
 | OpenEnv manifest | [openenv.yaml](openenv.yaml) |
 | Submission slide deck | [submission_assets/code_review_openenv_submission.pptx](submission_assets/code_review_openenv_submission.pptx) |
