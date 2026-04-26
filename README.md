@@ -107,11 +107,16 @@ Your agent must figure out what’s broken, gather evidence, and convince the si
 |23 | `fork_join` | Thread started but not joined (`join()` missing) | AST: remove `thread.join()` |
 |24 | `mutex_release` | Lock released by a thread that never acquired it | Template: incorrect release logic |
 |25 | `race_on_init` | Shared resource initialised after threads have started | Template: move initialisation after `join()` |
-## Deployment
 
-```bash
-openenv push
-```
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\POC-OF-Training-Progress/////////////////////////////////////////////////////////////////////////
+Small Run → Mid Run
+In an early small‑scale training run (2 PPO iterations, short episodes), the agent remained stuck in a loop of inspect and run_tests actions, never proposing a fix. The average reward stayed flat at 0.000, and the success rate was 0%. After increasing the number of PPO iterations to 15 and extending the episode length, the mid‑run training curve shows clear signs of learning: the agent began to propose fixes, leading to a positive average reward that fluctuates between +0.03 and +0.10, with occasional peaks up to +0.105. The reward curve now displays a visible upward trend, and the loss has stabilised at negative values, indicating that the policy is being optimized successfully. With further training and hyperparameter tuning, we expect the reward to continue rising and the success rate to improve significantly.
+ 
+<img width="1200" height="600" alt="reward_curve" src="https://github.com/user-attachments/assets/14d6cb47-19a2-4367-99d5-d7ea2a94d074" />
+<img width="667" height="242" alt="Screenshot 2026-04-26 071436" src="https://github.com/user-attachments/assets/6d20abd1-573b-4ffc-b487-16834174f65a" />
+<img width="1200" height="600" alt="mid-reward_curve" src="https://github.com/user-attachments/assets/eadef98b-3bc4-477d-91f5-44dc398c53e5" />
+<img width="1200" height="600" alt="loss_curve" src="https://github.com/user-attachments/assets/6798f90f-56f5-454e-8b90-7acd9d7b7b07" />
+
 
 ## License
 
