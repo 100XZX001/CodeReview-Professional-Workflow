@@ -156,9 +156,24 @@ class CodeReviewEnv:
     # smaller canonical set. Keep this mapping here so both modules can evolve
     # independently without breaking evaluation.
     _BUG_ID_CANONICAL_MAP = {
+        # Easy-family
+        "simple_typo": "null_check",
+        "default_value": "null_check",
+        "empty_return": "null_check",
+        "string_index": "off_by_one",
+
+        # Medium-family
+        "loop_skip": "off_by_one",
+        "sign_error": "wrong_operator",
+        "swap_args": "wrong_operator",
+        "uninitialised_var": "null_check",
+
+        # Hard-family
         "division_by_zero_empty": "division_by_zero",
         "division_by_zero_zero": "division_by_zero",
-        "sign_error": "wrong_operator",
+        "float_precision": "division_by_zero",
+        "abs_usage": "division_by_zero",
+        "round_error": "division_by_zero",
     }
 
     # ===================================================================
@@ -284,7 +299,7 @@ class CodeReviewEnv:
         # Keep the author's message separate from tool output.
         # Using `_test_results` here can leak unrelated outputs (tests/linter/docs)
         # and gives the policy a noisy signal for dialogue actions.
-        if self._last_action_type in ("write_comment", "ask_question", "propose_fix"):
+        if self._last_action_type in ("comment", "question", "fix"):
             author_response = self._last_author_response
         else:
             author_response = ""
@@ -336,11 +351,11 @@ class CodeReviewEnv:
         elif isinstance(action, Inspect):
             return "inspect"
         elif isinstance(action, WriteComment):
-            return "write_comment"
+            return "comment"
         elif isinstance(action, AskQuestion):
-            return "ask_question"
+            return "question"
         elif isinstance(action, ProposeFix):
-            return "propose_fix"
+            return "fix"
         elif isinstance(action, Done):
             return "done"
         elif isinstance(action, Skip):

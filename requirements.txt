@@ -1,0 +1,11 @@
+unsloth
+transformers
+trl
+datasets
+torch
+sentence-transformers
+chromadb
+pylint
+pydantic
+matplotlib
+huggingface_hub

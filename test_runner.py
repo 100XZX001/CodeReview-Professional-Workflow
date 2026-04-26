@@ -16,10 +16,13 @@ BUG_ID_CANONICAL_MAP = {
     "simple_typo": "null_check",
     "default_value": "null_check",
     "empty_return": "null_check",
+    "string_index": "off_by_one",
 
     # Medium arithmetic/control-flow aliases.
     "loop_skip": "off_by_one",
     "sign_error": "wrong_operator",
+    "swap_args": "wrong_operator",
+    "uninitialised_var": "null_check",
 
     # Hard numeric-safety aliases.
     "division_by_zero_empty": "division_by_zero",

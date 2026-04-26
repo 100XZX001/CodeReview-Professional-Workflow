@@ -6,12 +6,12 @@ from pydantic import BaseModel, Field, TypeAdapter, field_validator
 # Action classes (discriminated union)
 # ----------------------------------------------------------------------
 class Action(BaseModel):
-    action_type: Literal["write_comment", "skip", "done", "ask_question",
-                         "propose_fix", "execute", "inspect", "run_linter",
+    action_type: Literal["comment", "skip", "done", "question",
+                         "fix", "execute", "inspect", "run_linter",
                          "run_tests", "query_docs"]
 
 class WriteComment(Action):
-    action_type: Literal["write_comment"] = "write_comment"
+    action_type: Literal["comment"] = "comment"
     comment_text: str = Field(..., min_length=1)
 
 class Skip(Action):
@@ -21,11 +21,11 @@ class Done(Action):
     action_type: Literal["done"] = "done"
 
 class AskQuestion(Action):
-    action_type: Literal["ask_question"] = "ask_question"
+    action_type: Literal["question"] = "question"
     question: str = Field(..., min_length=1)
 
 class ProposeFix(Action):
-    action_type: Literal["propose_fix"] = "propose_fix"
+    action_type: Literal["fix"] = "fix"
     fix_code: str = Field(..., min_length=1)
     @field_validator('fix_code')
     @classmethod
@@ -57,6 +57,30 @@ AnyAction = Annotated[
     Field(discriminator='action_type')
 ]
 action_adapter = TypeAdapter(AnyAction)
+
+
+def map_to_env(action_type: str, content: Optional[str] = None) -> AnyAction:
+    """
+    Convert lightweight agent outputs into typed environment actions.
+    Kept at module level so training/inference code can reuse one mapping.
+    """
+    if action_type == "run_tests":
+        return RunTests()
+    if action_type == "run_linter":
+        return RunLinter()
+    if action_type == "inspect":
+        return Inspect()
+    if action_type == "fix":
+        return ProposeFix(fix_code=content or "")
+    if action_type == "comment":
+        return WriteComment(comment_text=content or "")
+    if action_type == "question":
+        return AskQuestion(question=content or "")
+    if action_type == "query_docs":
+        return QueryDocs(query_topic=content or "")
+    if action_type == "done":
+        return Done()
+    return Skip()
 
 # ----------------------------------------------------------------------
 # Observation (POMDP – what the agent sees)

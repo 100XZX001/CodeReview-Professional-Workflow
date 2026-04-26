@@ -41,7 +41,7 @@ class ToolUsageRubric(Rubric):
             # Discourage repeated docs calls after the first-use signal.
             if prev_docs_queried:
                 score -= 0.01
-        elif action_type == "ask_question" and env._step_count <= 3:
+        elif action_type == "question" and env._step_count <= 3:
             score += 0.02
         return score
 
@@ -56,7 +56,7 @@ class TestDeltaRubric(Rubric):
     def __call__(self, env, action, obs, reward, done, info):
         delta = env._current_test_score - env._previous_test_score
         effective = self.weight
-        if info.get("action_type") == "propose_fix":
+        if info.get("action_type") == "fix":
             effective *= 0.4
         return effective * delta
 
@@ -68,7 +68,7 @@ class LintDeltaRubric(Rubric):
     def __call__(self, env, action, obs, reward, done, info):
         delta = env._current_lint_score - env._previous_lint_score
         effective = self.weight * 0.5
-        if info.get("action_type") == "propose_fix":
+        if info.get("action_type") == "fix":
             effective *= 0.4
         return effective * delta
 
@@ -78,7 +78,7 @@ class LintDeltaRubric(Rubric):
 # --------------------------------------------------------------------------------
 class TerminalSuccessRubric(Rubric):
     def __call__(self, env, action, obs, reward, done, info):
-        if info.get("action_type") != "propose_fix":
+        if info.get("action_type") != "fix":
             return 0.0
         score = 0.0
         if env._current_test_score > 0.95:
@@ -113,7 +113,7 @@ class ExplorationRubric(Rubric):
 # --------------------------------------------------------------------------------
 class AntiHackingRubric(Rubric):
     def __call__(self, env, action, obs, reward, done, info):
-        if info.get("action_type") != "propose_fix":
+        if info.get("action_type") != "fix":
             return 0.0
         score = 0.0
         if not env._tests_run:
